@@ -1,0 +1,808 @@
+# -*- coding: utf-8 -*-
+
+__id__ = "all_messages_options"
+__name__ = "All Messages Options"
+__version__ = "2.2.0"
+__min_version__ = "12.1.1"
+__author__ = "@MRBi_0, @Nasha_WW, @extera_auyplugins"
+__description__ = "Плагін з різноманітним функціоналом + магазин плагінів (WebView)"
+__icon__ = "LordGram/0"
+
+from android.graphics import Color
+from android.media import AudioManager
+from android.view import Gravity, ViewGroup, WindowManager, View
+from android.widget import FrameLayout, LinearLayout, TextView, ScrollView, ImageView
+from android.util import TypedValue
+from android.graphics.drawable import GradientDrawable
+from android.content import Intent
+from android.net import Uri
+from android.webkit import WebView
+from base_plugin import BasePlugin, HookResult, HookStrategy, MenuItemData, MenuItemType, MethodReplacement, MethodHook
+from client_utils import send_text, get_last_fragment, get_messages_controller
+from ui.settings import Header, Divider, Switch, Input
+from ui.bulletin import BulletinHelper
+from android_utils import run_on_ui_thread, log
+from hook_utils import find_class, get_private_field
+from java import jlong, dynamic_proxy
+from java.lang.reflect import Modifier
+from org.telegram.tgnet.tl import TL_stars
+from org.telegram.ui.Stars import StarsController
+from org.telegram.messenger import UserConfig, ApplicationLoader, AndroidUtilities
+from org.telegram.ui import ChatActivity
+from org.telegram.ui.ActionBar import BottomSheet, Theme
+from decimal import Decimal, getcontext
+import time
+import threading
+import random
+import math
+import os
+import re
+import json
+import urllib.request
+from urllib.parse import urlparse, parse_qs, unquote
+
+getcontext().prec = 10
+
+# ═══════════════════════════════════════════════════════════
+#           МАГАЗИН ПЛАГІНІВ — GitHub Pages
+# ═══════════════════════════════════════════════════════════
+GITHUB_USER = "lolord1k228-create"
+GITHUB_REPO = "amo-plugins"
+GITHUB_BRANCH = "main"
+GITHUB_FOLDER = "plugin"
+STORE_URL = f"https://{GITHUB_USER}.github.io/{GITHUB_REPO}/"
+
+# ═══════════════════════════════════════════════════════════
+
+HEARTS = ["💘", "💝", "💖", "💗", "💓", "💞", "💕", "💟", "❣️", "💔", "❤️‍🔥", "❤️‍🩹", "❤️"]
+KAOMOJI = ["(灬ºωº灬)", "(⁄ ⁄•⁄ω⁄•⁄ ⁄)", "(*ฅ́˘ฅ̀*)", "(●´ω｀●)", "(ฅ_ฅ)", "(◕‿◕)", "♡(˘▽˘)♡", "(つ≧▽≦)つ"]
+
+MENU_SECTIONS = [
+    ("🌸 Cute", [("cute", "🌐 .cute", "текст", "Милий текст")]),
+    ("✍️ Стилі тексту", [("type", "✍️ .type bold/italic/script/fraktur/double/sans/mono/dot текст", "", "Стиль тексту")]),
+    ("🎲 Ігри та рандом", [
+        ("roll", "🎲 .roll", "[N]", "Кубик"),
+        ("coin", "🪙 .coin", "", "Орел/решка"),
+        ("dice", "🎲 .dice", "", "Кубик 1-6"),
+        ("random", "🎯 .random", "N M", "Випадкове число"),
+    ]),
+    ("🔧 Утиліти", [
+        ("calc", "🧮 .calc", "2+2", "Калькулятор"),
+        ("id", "🆔 .id", "", "ID чату"),
+    ]),
+    ("💥 Розсилка", [
+        ("spam", "💥 .spam", "N [текст]", "Спам"),
+        ("music", "🎵 .music", "(рядки)", "Рядки пісні"),
+    ]),
+    ("🚫 Модерація", [
+        ("snos", "❄️ .snos", "", "Блокує + заморожує"),
+        ("mute", "🚫 .mute", "", "Заблокувати"),
+    ]),
+    ("📦 Магазин", [
+        ("store", "🛒 .store", "", "Магазин плагінів (WebView)"),
+    ]),
+]
+
+def bulletin_info(m):
+    try: BulletinHelper.show_info(f"[AMO] {m}")
+    except Exception: pass
+
+def bulletin_success(m):
+    try: BulletinHelper.show_success(f"[AMO] {m}")
+    except Exception: pass
+
+def bulletin_error(m):
+    try: BulletinHelper.show_error(f"[AMO] {m}")
+    except Exception: pass
+
+def _cute(text, repeats=1, add_heart=True, add_kao=True):
+    text = text.strip()
+    if not text: return text
+    f = text[0]
+    if f.isalpha():
+        text = "-".join([f] * (repeats + 1)) + text[1:]
+    if add_heart: text += random.choice(HEARTS)
+    if add_kao: text += random.choice(KAOMOJI)
+    return text
+
+def _calc_safe(expr):
+    expr = expr.strip().lower()
+    for w, o in {"плюс": "+", "мінус": "-", "пі": str(math.pi), "пи": str(math.pi)}.items():
+        expr = expr.replace(w, o)
+    safe = "".join(c for c in expr if c in "0123456789+-*/()., sqrt%^ ")
+    safe = safe.replace("^", "**").replace("sqrt", "math.sqrt")
+    try: return eval(safe, {"__builtins__": {}, "math": math}, {})
+    except Exception: return None
+
+def _to_style(text, style):
+    if style == "dot": return "·" + "·".join(text) + "·"
+    result = []
+    for ch in text:
+        c = ord(ch)
+        if style == "bold":
+            if 65 <= c <= 90: ch = chr(0x1D400 + c - 65)
+            elif 97 <= c <= 122: ch = chr(0x1D41A + c - 97)
+        elif style == "italic":
+            if 65 <= c <= 90: ch = chr(0x1D434 + c - 65)
+            elif 97 <= c <= 122: ch = chr(0x1D44E + c - 97)
+        elif style == "script":
+            if 65 <= c <= 90: ch = chr(0x1D49C + c - 65)
+            elif 97 <= c <= 122: ch = chr(0x1D4B6 + c - 97)
+        elif style == "fraktur":
+            if 65 <= c <= 90: ch = chr(0x1D504 + c - 65)
+            elif 97 <= c <= 122: ch = chr(0x1D51E + c - 97)
+        elif style == "double":
+            if 65 <= c <= 90: ch = chr(0x1D538 + c - 65)
+            elif 97 <= c <= 122: ch = chr(0x1D552 + c - 97)
+        elif style == "sans":
+            if 65 <= c <= 90: ch = chr(0x1D5A0 + c - 65)
+            elif 97 <= c <= 122: ch = chr(0x1D5BA + c - 97)
+        elif style == "mono":
+            if 65 <= c <= 90: ch = chr(0x1D670 + c - 65)
+            elif 97 <= c <= 122: ch = chr(0x1D68A + c - 97)
+        result.append(ch)
+    return "".join(result)
+
+# ═══════════════════════════════════════════════════════════
+#                        ХУКИ
+# ═══════════════════════════════════════════════════════════
+
+class GetUserHook(MethodHook):
+    def __init__(self, plugin): self.plugin = plugin
+    def after_hooked_method(self, param):
+        try:
+            user = param.getResult()
+            if user is None: return
+            if int(user.id) in self.plugin.snosed_ids:
+                user.first_name = "Deleted Account"
+                user.last_name = ""
+                user.username = None
+                user.deleted = True
+                user.premium = True
+                try: user.photo = None
+                except Exception: pass
+        except Exception: pass
+
+class GetBalanceHook(MethodReplacement):
+    def __init__(self, plugin): self.plugin = plugin
+    def replace_hooked_method(self, param):
+        try:
+            v = self.plugin.stars_amount
+            frac = v - int(v)
+            nanos = int((frac * Decimal("1000000000")).to_integral_value())
+            nv = Modifier.isAbstract(TL_stars.StarsAmount.getClass().getModifiers())
+            amount = TL_stars.StarsAmount.ofStars(int(v)) if nv else TL_stars.StarsAmount(int(v))
+            amount.nanos = nanos
+            return amount
+        except Exception: return None
+
+class InfoButtonHook(MethodHook):
+    def __init__(self, plugin): self.plugin = plugin
+    def after_hooked_method(self, param):
+        try:
+            if self.plugin.get_setting("enable_info_button", True):
+                run_on_ui_thread(lambda: self.plugin._attach_info_button(param.thisObject))
+        except Exception: pass
+
+class InfoPauseHook(MethodHook):
+    def __init__(self, plugin): self.plugin = plugin
+    def after_hooked_method(self, param):
+        try: run_on_ui_thread(self.plugin._detach_info_button)
+        except Exception: pass
+
+# ═══════════════════════════════════════════════════════════
+#                    ГОЛОВНИЙ КЛАС
+# ═══════════════════════════════════════════════════════════
+
+class AllMessagesOptions(BasePlugin):
+    stars_amount = Decimal("1000")
+
+    def on_plugin_load(self):
+        self.spamming = False
+        self.snosed_ids = set()
+        self.stars_amount = Decimal(self.get_setting("stars_amount", "1000"))
+        self.info_btn = None
+        self.info_hooks = []
+        self.balance_hook_ref = None
+        self.last_sent_text = None
+        self.store_dialog = None
+
+        self.add_on_send_message_hook()
+        self.add_menu_item(MenuItemData(
+            menu_type=MenuItemType.DRAWER_MENU,
+            text="All Messages Options",
+            icon="msg_settings",
+            priority=5,
+            on_click=self._open_info,
+        ))
+        if self.get_setting("cmd_snos", True): self._install_snos_hook()
+        if self.get_setting("enable_stars", False): self._install_rich_hook()
+        self._install_info_hooks()
+        log(f"[AMO] loaded. Store: {STORE_URL}")
+
+    def _install_rich_hook(self):
+        try:
+            for m in StarsController.getClass().getDeclaredMethods():
+                if m.getName() == "getBalance":
+                    self.balance_hook_ref = self.hook_method(m, GetBalanceHook(self))
+        except Exception as e: log(f"[AMO] rich: {e}")
+
+    def _uninstall_rich_hook(self):
+        try:
+            if self.balance_hook_ref is not None:
+                self.unhook_method(self.balance_hook_ref)
+                self.balance_hook_ref = None
+        except Exception: pass
+
+    def _install_info_hooks(self):
+        try:
+            cls = ChatActivity.getClass() if hasattr(ChatActivity, "getClass") else ChatActivity
+            for n, h in (("createView", InfoButtonHook), ("onResume", InfoButtonHook), ("onPause", InfoPauseHook)):
+                try:
+                    m = cls.getDeclaredMethod(n, find_class("android.content.Context")) if n == "createView" else cls.getDeclaredMethod(n)
+                    m.setAccessible(True)
+                    ref = self.hook_method(m, h(self))
+                    if ref: self.info_hooks.append(ref)
+                except Exception as e: log(f"[AMO] hook {n}: {e}")
+        except Exception as e: log(f"[AMO] info: {e}")
+
+    def _make_info_icon(self, ctx):
+        try:
+            img = ImageView(ctx)
+            img.setScaleType(ImageView.ScaleType.CENTER_INSIDE)
+            from client_utils import get_media_data_controller
+            get_media_data_controller().setPlaceholderImageByIndex(img, "LordGram", 0, "100_100")
+            return img
+        except Exception: pass
+        tv = TextView(ctx)
+        tv.setText("ℹ️")
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 22)
+        return tv
+
+    def _attach_info_button(self, fragment):
+        try:
+            if fragment is None or not self.get_setting("enable_info_button", True) or self.info_btn is not None: return
+            ev = None
+            for f in ("chatActivityEnterView", "chatActivityEnterViewContainer"):
+                try:
+                    ev = get_private_field(fragment, f)
+                    if ev: break
+                except Exception: pass
+            if ev is None: return
+            host = None
+            for f in ("attachLayout", "sendButtonContainer", "textFieldContainer"):
+                try:
+                    host = get_private_field(ev, f)
+                    if host: break
+                except Exception: pass
+            if host is None: return
+            try:
+                if host.findViewWithTag("__amo_info__") is not None:
+                    self.info_btn = host.findViewWithTag("__amo_info__")
+                    return
+            except Exception: pass
+            btn = FrameLayout(host.getContext())
+            btn.setTag("__amo_info__")
+            icon = self._make_info_icon(host.getContext())
+            btn.addView(icon, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+            btn.setClickable(True)
+            plugin = self
+            class _C(dynamic_proxy(View.OnClickListener)):
+                def onClick(s, v):
+                    try: run_on_ui_thread(lambda: plugin._show_commands_menu(fragment))
+                    except Exception: pass
+            btn.setOnClickListener(_C())
+            if isinstance(host, LinearLayout):
+                lp = LinearLayout.LayoutParams(AndroidUtilities.dp(32), AndroidUtilities.dp(32))
+                lp.gravity = Gravity.CENTER_VERTICAL
+                host.addView(btn, lp)
+            else: host.addView(btn)
+            self.info_btn = btn
+        except Exception as e: log(f"[AMO] attach: {e}")
+
+    def _detach_info_button(self):
+        try:
+            if self.info_btn is not None and self.info_btn.getParent() is not None:
+                self.info_btn.getParent().removeView(self.info_btn)
+        except Exception: pass
+        self.info_btn = None
+
+    def _show_commands_menu(self, fragment):
+        try:
+            ctx = fragment.getParentActivity() if fragment else None
+            if ctx is None: ctx = ApplicationLoader.applicationContext
+            if ctx is None: return
+
+            sheet = BottomSheet(ctx, False)
+            scroll = ScrollView(ctx)
+            layout = LinearLayout(ctx)
+            layout.setOrientation(LinearLayout.VERTICAL)
+            layout.setPadding(AndroidUtilities.dp(16), AndroidUtilities.dp(12),
+                             AndroidUtilities.dp(16), AndroidUtilities.dp(24))
+
+            header = LinearLayout(ctx)
+            header.setOrientation(LinearLayout.VERTICAL)
+            header.setGravity(Gravity.CENTER)
+            header.setPadding(0, AndroidUtilities.dp(8), 0, AndroidUtilities.dp(16))
+
+            title = TextView(ctx)
+            title.setText("All Messages Options")
+            title.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 22)
+            try:
+                title.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText))
+                title.setTypeface(AndroidUtilities.bold())
+            except Exception: pass
+            header.addView(title)
+
+            version = TextView(ctx)
+            version.setText(f"v{__version__} • {__author__}")
+            version.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 12)
+            version.setPadding(0, AndroidUtilities.dp(4), 0, 0)
+            try:
+                version.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText))
+            except Exception: pass
+            header.addView(version)
+            layout.addView(header)
+
+            for section_name, cmds in MENU_SECTIONS:
+                section_hdr = TextView(ctx)
+                section_hdr.setText(section_name)
+                section_hdr.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 15)
+                section_hdr.setPadding(AndroidUtilities.dp(4), AndroidUtilities.dp(14),
+                                       AndroidUtilities.dp(4), AndroidUtilities.dp(6))
+                try:
+                    section_hdr.setTextColor(Theme.getColor(Theme.key_featuredStickers_addButton))
+                    section_hdr.setTypeface(AndroidUtilities.bold())
+                except Exception: pass
+                layout.addView(section_hdr)
+
+                for cmd_id, cmd_name, args, purpose in cmds:
+                    if not self.get_setting(f"cmd_{cmd_id}", True): continue
+                    row = LinearLayout(ctx)
+                    row.setOrientation(LinearLayout.VERTICAL)
+                    row.setPadding(AndroidUtilities.dp(12), AndroidUtilities.dp(10),
+                                   AndroidUtilities.dp(12), AndroidUtilities.dp(10))
+                    try:
+                        row_bg = GradientDrawable()
+                        row_bg.setColor(Theme.getColor(Theme.key_windowBackgroundGray))
+                        row_bg.setCornerRadius(float(AndroidUtilities.dp(10)))
+                        row.setBackground(row_bg)
+                    except Exception: pass
+
+                    cv = TextView(ctx)
+                    cv.setText(f"{cmd_name} {args}".strip())
+                    cv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 14)
+                    try:
+                        cv.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteBlackText))
+                    except Exception: pass
+                    pv = TextView(ctx)
+                    pv.setText(purpose)
+                    pv.setTextSize(TypedValue.COMPLEX_UNIT_DIP, 11)
+                    pv.setPadding(0, AndroidUtilities.dp(2), 0, 0)
+                    try:
+                        pv.setTextColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayText))
+                    except Exception: pass
+                    row.addView(cv); row.addView(pv)
+
+                    plugin_ref = self
+                    class _CmdClick(dynamic_proxy(View.OnClickListener)):
+                        def __init__(s, c, cid):
+                            super().__init__(); s.c = c; s.cid = cid
+                        def onClick(s, v):
+                            try:
+                                if s.cid == "store":
+                                    run_on_ui_thread(lambda: plugin_ref._open_store_webview())
+                                    try: sheet.dismiss()
+                                    except Exception: pass
+                                    return
+                                parts = s.c.split()
+                                cmd_text = ""
+                                for p in parts:
+                                    if p.startswith("."):
+                                        cmd_text = p
+                                        break
+                                if not cmd_text: return
+                                full_text = cmd_text + " "
+                                ev = get_private_field(fragment, "chatActivityEnterView")
+                                if ev is None: return
+                                edit = None
+                                for field in ("messageEditText", "editText"):
+                                    try:
+                                        edit = get_private_field(ev, field)
+                                        if edit is not None: break
+                                    except Exception: continue
+                                if edit is None: return
+                                edit.setText(full_text)
+                                edit.setSelection(len(full_text))
+                                edit.requestFocus()
+                                try: AndroidUtilities.showKeyboard(edit)
+                                except Exception: pass
+                            except Exception: pass
+                            try: sheet.dismiss()
+                            except Exception: pass
+                    row.setOnClickListener(_CmdClick(cmd_name, cmd_id))
+
+                    lp = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT
+                    )
+                    lp.setMargins(0, AndroidUtilities.dp(3), 0, AndroidUtilities.dp(3))
+                    layout.addView(row, lp)
+
+            scroll.addView(layout)
+            sheet.setCustomView(scroll)
+            sheet.show()
+        except Exception as e: log(f"[AMO] menu: {e}")
+
+    # ═══════════════════════════════════════════════════════
+    #           МАГАЗИН — GitHub Pages у WebView
+    #           (без WebViewClient, з DownloadListener)
+    # ═══════════════════════════════════════════════════════
+
+    def _open_store_webview(self):
+        def run():
+            try:
+                fragment = get_last_fragment()
+                if not fragment or not fragment.getParentActivity():
+                    bulletin_error("Немає активної активності")
+                    return
+
+                act = fragment.getParentActivity()
+                layout = FrameLayout(act)
+                layout.setBackgroundColor(Color.parseColor("#0f0f14"))
+
+                webview = WebView(act)
+                webview.setVerticalScrollBarEnabled(False)
+                webview.setHorizontalScrollBarEnabled(False)
+                webview.setBackgroundColor(Color.parseColor("#0f0f14"))
+
+                settings = webview.getSettings()
+                settings.setJavaScriptEnabled(True)
+                settings.setDomStorageEnabled(True)
+
+                plugin_ref = self
+
+                # ═══════════════════════════════════════════
+                #  DownloadListener — це ІНТЕРФЕЙС, тому
+                #  dynamic_proxy з ним працює (на відміну від WebViewClient)
+                # ═══════════════════════════════════════════
+                class StoreDownloadListener(dynamic_proxy(
+                        find_class("android.webkit.DownloadListener"))):
+                    def onDownloadStart(self, url, user_agent, content_disposition,
+                                        mimetype, content_length):
+                        try:
+                            u = str(url)
+                            log(f"[AMO] DownloadListener: {u}")
+                            if u.startswith("amo://install"):
+                                parsed = urlparse(u)
+                                qs = parse_qs(parsed.query)
+                                dl_url = unquote(qs.get("url", [""])[0])
+                                dl_name = unquote(qs.get("name", ["plugin"])[0])
+                                if dl_url:
+                                    threading.Thread(
+                                        target=plugin_ref._download_and_open,
+                                        args=(dl_url, dl_name),
+                                    ).start()
+                        except Exception as e:
+                            log(f"[AMO] dl listener: {e}")
+
+                webview.setDownloadListener(StoreDownloadListener())
+                webview.loadUrl(STORE_URL)
+
+                layout.addView(webview, ViewGroup.LayoutParams(-1, -1))
+
+                # Кнопка закриття
+                btn = TextView(act)
+                btn.setText("✕")
+                btn.setTextSize(22.0)
+                btn.setTextColor(Color.WHITE)
+                btn.setGravity(Gravity.CENTER)
+                btn.setBackgroundColor(Color.parseColor("#40000000"))
+                btn.setPadding(35, 15, 35, 15)
+
+                params = FrameLayout.LayoutParams(-2, -2)
+                params.gravity = Gravity.TOP | Gravity.RIGHT
+                params.setMargins(0, 30, 30, 0)
+                layout.addView(btn, params)
+
+                from android.app import Dialog
+                dialog = Dialog(act, 16974122)
+                dialog.setContentView(layout)
+
+                window = dialog.getWindow()
+                if window:
+                    window.setLayout(-1, -1)
+                    window.setBackgroundDrawable(None)
+                    if self.get_setting("keep_screen_on", True):
+                        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+                class Click(dynamic_proxy(View.OnClickListener)):
+                    def onClick(s, v):
+                        try: dialog.dismiss()
+                        except Exception: pass
+                btn.setOnClickListener(Click())
+
+                class Dismiss(dynamic_proxy(
+                        find_class("android.content.DialogInterface$OnDismissListener"))):
+                    def onDismiss(s, d):
+                        try:
+                            webview.destroy()
+                            self.store_dialog = None
+                        except Exception: pass
+
+                dialog.setOnDismissListener(Dismiss())
+                self.store_dialog = dialog
+                dialog.show()
+
+            except Exception as e:
+                log(f"[AMO] store webview: {e}")
+                err = str(e)
+                run_on_ui_thread(lambda: bulletin_error(f"WebView: {err}"))
+
+        run_on_ui_thread(run)
+
+    def _download_and_open(self, url, name):
+        try:
+            filename = url.split("/")[-1].split("?")[0]
+            if not filename.endswith(".plugin"):
+                filename = (name or "downloaded") + ".plugin"
+            filename = re.sub(r'[^\w\.\-]', '_', filename)
+
+            save_path = os.path.join("/storage/emulated/0/Download/", filename)
+
+            run_on_ui_thread(lambda: bulletin_info(f"⬇️ {filename}"))
+
+            req = urllib.request.Request(url)
+            req.add_header("User-Agent", "AMO-Store")
+            req.add_header("Cache-Control", "no-cache")
+            with urllib.request.urlopen(req, timeout=30) as response:
+                data = response.read()
+
+            with open(save_path, "wb") as fh:
+                fh.write(data)
+
+            run_on_ui_thread(lambda: bulletin_success(f"✅ {len(data)} байт → {filename}"))
+
+            ctx = ApplicationLoader.applicationContext
+            intent = Intent(Intent.ACTION_VIEW)
+            uri = Uri.fromFile(find_class("java.io.File")(save_path))
+            intent.setDataAndType(uri, "application/octet-stream")
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            ctx.startActivity(intent)
+        except Exception as e:
+            log(f"[AMO] download: {e}")
+            err = str(e)
+            run_on_ui_thread(lambda: bulletin_error(f"Помилка: {err}"))
+
+    # ═══════════════════════════════════════════════════════
+
+    def _install_snos_hook(self):
+        try:
+            cls = find_class("org.telegram.messenger.MessagesController")
+            if cls is None: return
+            for m in cls.getClass().getDeclaredMethods():
+                if m.getName() == "getUser":
+                    self.hook_method(m, GetUserHook(self))
+        except Exception as e: log(f"[AMO] snos: {e}")
+
+    def _open_info(self, ctx):
+        run_on_ui_thread(lambda: bulletin_info(f"All Messages Options v{__version__}"))
+
+    def _my_id(self):
+        try: return int(UserConfig.getInstance(int(UserConfig.selectedAccount)).getClientUserId())
+        except Exception: return 0
+
+    def _on_stars_toggle(self, e):
+        if e: self._install_rich_hook()
+        else: self._uninstall_rich_hook()
+
+    def _on_info_toggle(self, e):
+        if e: run_on_ui_thread(lambda: self._attach_info_button(get_last_fragment()))
+        else: run_on_ui_thread(self._detach_info_button)
+
+    def _cute_settings(self):
+        try: r = int(self.get_setting("cute_repeats", 0) or 0)
+        except Exception: r = 0
+        r = max(0, min(r, 4))
+        return r, bool(self.get_setting("cute_heart", True)), bool(self.get_setting("cute_kao", True))
+
+    def _get_last_message_text(self, peer):
+        if self.last_sent_text: return self.last_sent_text
+        try:
+            f = get_last_fragment()
+            if f is None: return None
+            mc = get_messages_controller()
+            if mc is None: return None
+            lm = mc.getLastMessage(int(f.getDialogId()))
+            if lm is None: return None
+            text = None
+            owner = getattr(lm, "messageOwner", None)
+            if owner is not None: text = getattr(owner, "message", None)
+            if not text:
+                try: text = lm.getMessageText()
+                except Exception: text = None
+            if text and not str(text).strip().startswith("."):
+                return str(text)
+        except Exception: pass
+        return None
+
+    def _do_spam(self, peer, count, text):
+        for i in range(count):
+            try: send_text(peer, text)
+            except Exception as e: log(f"[AMO] spam: {e}")
+            time.sleep(0.3)
+        run_on_ui_thread(lambda: bulletin_success(f"✅ Спам: {count}/{count}"))
+
+    def _do_music(self, peer, lines, delay):
+        try:
+            for line in lines:
+                try: send_text(peer, line)
+                except Exception as e: log(f"[AMO] music: {e}")
+                time.sleep(delay)
+            run_on_ui_thread(lambda: bulletin_success(f"✅ Пісня ({len(lines)} рядків)"))
+        except Exception as e: log(f"[AMO] music: {e}")
+
+    def _do_snos_and_block(self, peer, account):
+        try:
+            uid = int(peer)
+            self.snosed_ids.add(uid)
+            try:
+                controller = find_class("org.telegram.messenger.MessagesController")
+                controller.getInstance(account).blockPeer(jlong(peer))
+                run_on_ui_thread(lambda: bulletin_success(f"❄️ Заблоковано: {uid}"))
+            except Exception as e:
+                log(f"[AMO] block: {e}")
+                run_on_ui_thread(lambda: bulletin_error(f"Помилка: {e}"))
+        except Exception as e: log(f"[AMO] snos: {e}")
+
+    def _do_mute(self, peer, account):
+        try:
+            uid = int(peer)
+            try:
+                controller = find_class("org.telegram.messenger.MessagesController")
+                controller.getInstance(account).blockPeer(jlong(peer))
+                run_on_ui_thread(lambda: bulletin_success(f"🚫 Заблоковано: {uid}"))
+            except Exception as e:
+                log(f"[AMO] mute: {e}")
+                run_on_ui_thread(lambda: bulletin_error(f"Помилка: {e}"))
+        except Exception as e: log(f"[AMO] mute: {e}")
+
+    def on_send_message_hook(self, account, params):
+        try:
+            if self.spamming or not isinstance(params.message, str): return HookResult()
+            t = params.message
+            if not t.startswith("."):
+                self.last_sent_text = t
+                return HookResult()
+
+            parts = t.split(" ", 1)
+            cmd = parts[0][1:].strip().lower()
+            args = parts[1].strip() if len(parts) > 1 else ""
+
+            if not self.get_setting(f"cmd_{cmd}", True) and cmd not in ("music", "mute"):
+                return HookResult(strategy=HookStrategy.CANCEL)
+
+            if cmd == "cute":
+                if not args: return HookResult(strategy=HookStrategy.CANCEL)
+                r, h, k = self._cute_settings()
+                send_text(params.peer, _cute(args, r, h, k))
+                return HookResult(strategy=HookStrategy.CANCEL)
+            if cmd == "type":
+                sp = args.split(" ", 1)
+                if len(sp) < 2: return HookResult(strategy=HookStrategy.CANCEL)
+                style, text = sp[0].lower(), sp[1]
+                if style in ("bold","italic","script","fraktur","double","sans","mono","dot"):
+                    send_text(params.peer, _to_style(text, style))
+                return HookResult(strategy=HookStrategy.CANCEL)
+            if cmd == "calc":
+                if not args: return HookResult(strategy=HookStrategy.CANCEL)
+                r = _calc_safe(args)
+                send_text(params.peer, f"🧮 {args} = {r}" if r is not None else "❌ Помилка")
+                return HookResult(strategy=HookStrategy.CANCEL)
+            if cmd == "store":
+                run_on_ui_thread(self._open_store_webview)
+                return HookResult(strategy=HookStrategy.CANCEL)
+            if cmd == "spam":
+                sp = args.split(" ", 1)
+                if not sp or not sp[0]: return HookResult(strategy=HookStrategy.CANCEL)
+                try: count = int(sp[0])
+                except ValueError: return HookResult(strategy=HookStrategy.CANCEL)
+                if count <= 0 or count > 100: return HookResult(strategy=HookStrategy.CANCEL)
+                if len(sp) > 1 and sp[1].strip():
+                    msg = sp[1]
+                else:
+                    msg = self._get_last_message_text(params.peer)
+                    if not msg:
+                        run_on_ui_thread(lambda: bulletin_error("Немає тексту"))
+                        return HookResult(strategy=HookStrategy.CANCEL)
+                self.spamming = True
+                threading.Thread(target=self._do_spam, args=(params.peer, count, msg)).start()
+                self.spamming = False
+                return HookResult(strategy=HookStrategy.CANCEL)
+            if cmd == "snos":
+                peer = params.peer
+                if peer is None or int(peer) <= 0:
+                    send_text(peer, "Це не особистий чат")
+                    return HookResult(strategy=HookStrategy.CANCEL)
+                if self._my_id() == int(peer):
+                    send_text(peer, "🤡 не можна себе")
+                    return HookResult(strategy=HookStrategy.CANCEL)
+                threading.Thread(target=self._do_snos_and_block, args=(peer, account)).start()
+                return HookResult(strategy=HookStrategy.CANCEL)
+            if cmd == "id":
+                send_text(params.peer, f"🆔 {params.peer}")
+                return HookResult(strategy=HookStrategy.CANCEL)
+            if cmd == "coin":
+                send_text(params.peer, random.choice(["🪙 Орел", "🪙 Решка"]))
+                return HookResult(strategy=HookStrategy.CANCEL)
+            if cmd == "dice":
+                send_text(params.peer, f"🎲 {random.randint(1, 6)}")
+                return HookResult(strategy=HookStrategy.CANCEL)
+            if cmd == "random":
+                sp = args.split()
+                if len(sp) < 2:
+                    send_text(params.peer, "❌ Формат: .random 1 100")
+                    return HookResult(strategy=HookStrategy.CANCEL)
+                try:
+                    a, b = int(sp[0]), int(sp[1])
+                    send_text(params.peer, f"🎯 {random.randint(min(a,b), max(a,b))}")
+                except ValueError:
+                    send_text(params.peer, "❌ Помилка")
+                return HookResult(strategy=HookStrategy.CANCEL)
+            if cmd == "roll":
+                try: sides = int(args) if args else 6
+                except ValueError: sides = 6
+                sides = max(2, min(sides, 1000))
+                send_text(params.peer, f"🎲 {random.randint(1, sides)} (1-{sides})")
+                return HookResult(strategy=HookStrategy.CANCEL)
+            if cmd == "music" and self.get_setting("cmd_music", True):
+                lines = [l for l in t.split("\n")[1:] if l.strip()]
+                if not lines: return HookResult(strategy=HookStrategy.CANCEL)
+                try: d = float(self.get_setting("music_delay", "2.0"))
+                except ValueError: d = 2.0
+                self.spamming = True
+                threading.Thread(target=self._do_music, args=(params.peer, lines, d)).start()
+                self.spamming = False
+                return HookResult(strategy=HookStrategy.CANCEL)
+            if cmd == "mute" and self.get_setting("cmd_mute", True):
+                threading.Thread(target=self._do_mute, args=(params.peer, account)).start()
+                return HookResult(strategy=HookStrategy.CANCEL)
+            return HookResult()
+        except Exception as e:
+            log(f"[AMO] hook: {e}")
+            return HookResult()
+
+    def create_settings(self):
+        return [
+            Header(text="All Messages Options"),
+            Divider(),
+            Switch(key="enable_info_button", text="Кнопка ℹ️ біля поля вводу",
+                   default=True, on_change=self._on_info_toggle),
+            Switch(key="cmd_snos", text="Команда .snos", default=True),
+            Switch(key="enable_stars", text="Фейкові зірки", default=False,
+                   on_change=self._on_stars_toggle),
+            Input(key="stars_amount", text="Кількість зірок", default="1000"),
+            Switch(key="keep_screen_on", text="Не гасити екран у магазині", default=True),
+            Divider(),
+            Header(text="Команди"),
+            Switch(key="cmd_cute", text="🌐 .cute", default=True),
+            Switch(key="cmd_type", text="✍️ .type", default=True),
+            Switch(key="cmd_roll", text="🎲 .roll", default=True),
+            Switch(key="cmd_coin", text="🪙 .coin", default=True),
+            Switch(key="cmd_dice", text="🎲 .dice", default=True),
+            Switch(key="cmd_random", text="🎯 .random", default=True),
+            Switch(key="cmd_calc", text="🧮 .calc", default=True),
+            Switch(key="cmd_id", text="🆔 .id", default=True),
+            Switch(key="cmd_spam", text="💥 .spam", default=True),
+            Switch(key="cmd_music", text="🎵 .music", default=True),
+            Switch(key="cmd_snos", text="❄️ .snos", default=True),
+            Switch(key="cmd_mute", text="🚫 .mute", default=True),
+            Switch(key="cmd_store", text="🛒 .store (WebView магазин)", default=True),
+            Divider(),
+            Header(text="Налаштування .cute"),
+            Input(key="cute_repeats", text="Повторів (0-4)", default="0"),
+            Switch(key="cute_heart", text="Додавати серце", default=True),
+            Switch(key="cute_kao", text="Додавати каомодзі", default=True),
+            Input(key="music_delay", text="Затримка .music (сек)", default="2.0"),
+        ]
