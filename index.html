@@ -23,7 +23,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .btn:active { opacity: 0.7; }
 .toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%) translateY(120px); background: #2a2a36; color: white; padding: 12px 24px; border-radius: 24px; font-size: 14px; transition: transform 0.3s; z-index: 9999; box-shadow: 0 4px 20px rgba(0,0,0,0.5); max-width: 90vw; text-align: center; }
 .toast.show { transform: translateX(-50%) translateY(0); }
-
 .bot-btn-container { margin-bottom: 20px; }
 .bot-btn { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; background: #2ea6ff; color: white; text-decoration: none; padding: 14px; border-radius: 12px; font-size: 16px; font-weight: 600; box-shadow: 0 4px 15px rgba(46, 166, 255, 0.3); transition: background 0.2s; }
 .bot-btn:active { background: #2482c9; }
@@ -49,27 +48,16 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 <div class="toast" id="toast"></div>
 
 <script>
-// ═══════════════════════════════════════════════════════════
-// ТУТ МИ ВРУЧНУ ЗАШИВАЄМО КАТАЛОГ ПЛАГІНІВ
-// ═══════════════════════════════════════════════════════════
+// ТІЛЬКИ 1 ПЛАГІН
 var PLUGINS_CATALOG = [
   {
-    name: "Test Plugin",
-    version: "1.0.0",
-    author: "@lolord1k228-create",
-    description: "Це тестовий плагін. Він створений для перевірки роботи магазину. Напиши .test в чаті!",
-    url: "https://cdn.jsdelivr.net/gh/lolord1k228-create/amo-plugins@main/plugin/test_plugin.plugin"
-  },
-  {
-    name: "Flappy Bird",
-    version: "1.1.0",
-    author: "@souItag",
-    description: "Легендарна Flappy Bird прямо в клієнті. Відправ .flappy або запусти через меню.",
-    url: "https://cdn.jsdelivr.net/gh/lolord1k228-create/amo-plugins@main/plugin/flappy_bird_game.plugin"
+    name: "Еблан NFT",
+    version: "1.1.5",
+    author: "NFT Market",
+    description: "Ексклюзивний плагін для справжніх цінителів.",
+    command: "/eblan" // Команда для бота
   }
 ];
-
-// ═══════════════════════════════════════════════════════════
 
 function showToast(msg) {
   var t = document.getElementById('toast');
@@ -88,11 +76,6 @@ function loadCatalog() {
   var container = document.getElementById('catalog');
   var html = '';
 
-  if (PLUGINS_CATALOG.length === 0) {
-    container.innerHTML = '<div class="empty" style="text-align:center;padding:40px;color:#888;">Каталог порожній</div>';
-    return;
-  }
-
   for (var j = 0; j < PLUGINS_CATALOG.length; j++) {
     var p = PLUGINS_CATALOG[j];
     html +=
@@ -100,31 +83,23 @@ function loadCatalog() {
         '<div class="card-header">' +
           '<div class="card-icon">🖼️</div>' +
           '<div class="card-title-block">' +
-            '<div class="card-title">' + escapeHtml(p.name) + ' NFT</div>' +
+            '<div class="card-title">' + escapeHtml(p.name) + '</div>' +
             '<div class="card-meta">v' + escapeHtml(p.version) + ' · ' + escapeHtml(p.author) + '</div>' +
           '</div>' +
         '</div>' +
         '<div class="card-desc">' + escapeHtml(p.description) + '</div>' +
-        // Кнопка викликає функцію купівлі
-        '<button class="btn" onclick="buyNft(\'' + p.url + '\')">💎 Купити Еблан NFT</button>' +
+        '<button class="btn" onclick="buyNft(\'' + p.command + '\')">💎 Купити Еблан NFT</button>' +
       '</div>';
   }
   container.innerHTML = html;
 }
 
-// Функція, яка відкриває @Pluginallbot і передає йому команду
-function buyNft(url) {
-  // Формуємо посилання. Telegram автоматично перетворить ?start= на команду /start <код>
-  // Щоб бот зрозумів, що це команда /eblan, ми передаємо "eblan_<URL>"
-  var startPayload = 'eblan_' + encodeURIComponent(url);
-  var botUrl = 'https://t.me/Pluginallbot?start=' + startPayload;
-  
-  // Відкриваємо бота
-  window.open(botUrl, '_blank');
-  showToast('⏳ Переходимо до @Pluginallbot...');
+function buyNft(cmd) {
+  // Передаємо команду через кастомну схему
+  window.location.href = 'amo://botcmd?cmd=' + encodeURIComponent(cmd);
+  showToast('⏳ Відкриваю @Pluginallbot...');
 }
 
-// Запускаємо відображення
 loadCatalog();
 </script>
 </body>
