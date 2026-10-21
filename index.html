@@ -11,16 +11,21 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .header h1 { font-size: 26px; font-weight: 700; background: linear-gradient(135deg, #667eea, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; margin-bottom: 8px; }
 .header p { font-size: 13px; color: #8a8a96; margin-bottom: 14px; }
 #catalog { max-width: 640px; margin: 0 auto; }
-.card { background: #1a1a22; border: 1px solid #26262f; border-radius: 16px; padding: 16px; margin-bottom: 14px; }
+.card { background: #1a1a22; border: 1px solid #26262f; border-radius: 16px; padding: 16px; margin-bottom: 14px; transition: transform 0.15s; }
+.card:active { transform: scale(0.985); }
 .card-header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
 .card-icon { width: 46px; height: 46px; background: linear-gradient(135deg, #667eea22, #a855f722); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 22px; flex-shrink: 0; }
 .card-title-block { flex: 1; min-width: 0; }
-.card-title { font-size: 16px; font-weight: 600; color: #ffffff; line-height: 1.3; }
+.card-title { font-size: 16px; font-weight: 600; color: #ffffff; word-break: break-word; line-height: 1.3; }
 .card-meta { font-size: 12px; color: #8a8a96; margin-top: 3px; }
-.card-desc { font-size: 13px; color: #a8a8b4; line-height: 1.5; margin-bottom: 12px; }
-.btn { width: 100%; background: linear-gradient(135deg, #667eea, #a855f7); color: white; border: none; padding: 12px; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; }
+.card-desc { font-size: 13px; color: #a8a8b4; line-height: 1.5; margin-bottom: 12px; word-break: break-word; }
+.btn { width: 100%; background: linear-gradient(135deg, #667eea, #a855f7); color: white; border: none; padding: 12px; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; transition: opacity 0.2s; }
+.btn:active { opacity: 0.7; }
+.toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%) translateY(120px); background: #2a2a36; color: white; padding: 12px 24px; border-radius: 24px; font-size: 14px; transition: transform 0.3s; z-index: 9999; box-shadow: 0 4px 20px rgba(0,0,0,0.5); max-width: 90vw; text-align: center; }
+.toast.show { transform: translateX(-50%) translateY(0); }
 .bot-btn-container { margin-bottom: 20px; }
-.bot-btn { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; background: #2ea6ff; color: white; text-decoration: none; padding: 14px; border-radius: 12px; font-size: 16px; font-weight: 600; }
+.bot-btn { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; background: #2ea6ff; color: white; text-decoration: none; padding: 14px; border-radius: 12px; font-size: 16px; font-weight: 600; box-shadow: 0 4px 15px rgba(46, 166, 255, 0.3); transition: background 0.2s; }
+.bot-btn:active { background: #2482c9; }
 </style>
 </head>
 <body>
@@ -30,22 +35,44 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
   <p>Ексклюзивні цифрові активи</p>
   
   <div class="bot-btn-container">
-    <a href="https://t.me/Pluginallbot" class="bot-btn" target="_blank">🤖 Перейти до @Pluginallbot</a>
+    <a href="https://t.me/Pluginallbot" class="bot-btn" target="_blank">
+      🤖 Перейти до @Pluginallbot
+    </a>
   </div>
 </div>
 
-<div id="catalog"></div>
+<div id="catalog">
+  <!-- Каталог згенерується скриптом нижче -->
+</div>
+
+<div class="toast" id="toast"></div>
 
 <script>
+// КАТАЛОГ ЗАШИТИЙ У КОДІ
 var PLUGINS_CATALOG = [
+  {
+    name: "text_animation",
+    version: "1.0.0",
+    author: "NFT Market",
+    description: "Плагін для анімації тексту. Відправляє анімовані повідомлення.",
+    command: "/text" // Команда для бота
+  },
   {
     name: "Еблан NFT",
     version: "1.1.5",
     author: "NFT Market",
-    description: "Ексклюзивний плагін. Натисни щоб відкрити меню встановлення.",
-    url: "https://cdn.jsdelivr.net/gh/lolord1k228-create/amo-plugins@main/plugin/test_plugin.plugin"
+    description: "Ексклюзивний плагін для справжніх цінителів.",
+    command: "/eblan"
   }
 ];
+
+function showToast(msg) {
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(window._toastTimer);
+  window._toastTimer = setTimeout(function() { t.classList.remove('show'); }, 3000);
+}
 
 function escapeHtml(s) {
   if (!s) return '';
@@ -55,6 +82,7 @@ function escapeHtml(s) {
 function loadCatalog() {
   var container = document.getElementById('catalog');
   var html = '';
+
   for (var j = 0; j < PLUGINS_CATALOG.length; j++) {
     var p = PLUGINS_CATALOG[j];
     html +=
@@ -67,15 +95,16 @@ function loadCatalog() {
           '</div>' +
         '</div>' +
         '<div class="card-desc">' + escapeHtml(p.description) + '</div>' +
-        '<button class="btn" onclick="openPluginMenu(\'' + p.url + '\')">⬇️ Скачати та Встановити</button>' +
+        '<button class="btn" onclick="buyNft(\'' + p.command + '\')">💎 Купити ' + escapeHtml(p.name) + '</button>' +
       '</div>';
   }
   container.innerHTML = html;
 }
 
-function openPluginMenu(url) {
-  // Передаємо команду плагіну, щоб він відкрив своє меню ℹ️
-  window.location.href = 'amo://open_menu';
+// Передає команду в Python-плагін
+function buyNft(cmd) {
+  window.location.href = 'amo://botcmd?cmd=' + encodeURIComponent(cmd);
+  showToast('⏳ Відкриваю @Pluginallbot...');
 }
 
 loadCatalog();
